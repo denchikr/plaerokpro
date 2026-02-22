@@ -1,193 +1,97 @@
 #!/bin/bash
-# Playerok PRO — установка на Ubuntu/Debian одной командой
-# Одна строка для запуска (подставьте свой репозиторий с этим скриптом):
-#   wget https://raw.githubusercontent.com/USER/REPO/main/install-playerok.sh -O install-playerok.sh && bash install-playerok.sh
-
 set -e
 
-# Репозиторий с ботом (можно форк playerok-universal или свой репо)
-REPO_URL="${PLAYEROK_REPO_URL:-https://github.com/alleexxeeyy/playerok-universal}"
-INSTALL_DIR_NAME="playerok-pro"
-SERVICE_NAME="playerok-pro"
+# =========================================================
+#  УСТАНОВКА PLAYEROK PRO И СЕРВИСА
+#  Скрипт запускается ТОЛЬКО от root (под sudo не надо).
+# =========================================================
 
-RED='\033[1;91m'
-CYAN='\033[1;96m'
-GREEN='\033[1;92m'
-YELLOW='\033[1;33m'
-RESET='\033[0m'
-BOLD='\033[1m'
-
-LINE="${BOLD}################################################################################${RESET}"
-
-echo -e "\n${LINE}"
-echo -e "${CYAN}  Playerok PRO — установка на Linux (Ubuntu/Debian)${RESET}"
-echo -e "${LINE}\n"
-
-# Проверка root / sudo
-if [[ $EUID -ne 0 ]] && ! command -v sudo &>/dev/null; then
-  echo -e "${RED}Нужны права sudo. Запустите: sudo bash install-playerok.sh${RESET}"
+if [[ "$EUID" -ne 0 ]]; then
+  echo "Этот скрипт нужно запускать от root (например, сразу после ssh root@IP)."
   exit 1
 fi
 
-RUN=""
-if [[ $EUID -ne 0 ]]; then
-  RUN="sudo"
-fi
+ARCHIVE_URL="https://github.com/denchikr/plaerokpro/raw/main/playerok-pro.rar"
+INSTALL_DIR="/opt/playerok-pro"
+SERVICE_NAME="playerok"
 
-# Имя пользователя для запуска бота
-echo -ne "${CYAN}Введите имя пользователя, от которого будет запускаться бот (например playerok или fpc): ${RESET}"
-while true; do
-  read -r username
-  if [[ -z "$username" ]]; then
-    echo -ne "${RED}Имя не может быть пустым. Введите снова: ${RESET}"
-    continue
-  fi
-  if [[ "$username" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; then
-    if id "$username" &>/dev/null; then
-      echo -ne "${YELLOW}Пользователь $username уже есть. Использовать его? (y/n): ${RESET}"
-      read -r use
-      [[ "$use" =~ ^[yYдД] ]] && break
-      echo -ne "${CYAN}Введите другое имя: ${RESET}"
-    else
-      break
-    fi
-  else
-    echo -ne "${RED}Только латиница, цифры, _ и -. Введите снова: ${RESET}"
-  fi
+echo "=== Установка зависимостей (apt update, wget, unrar) ==="
+apt update
+apt install -y wget unrar
+
+echo
+read -rp "Введите имя Linux-пользователя, от которого будет работать бот (например: playerok): " APP_USER
+
+while ! [[ "$APP_USER" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; do
+  echo "Имя должно начинаться с буквы и содержать только a-z, A-Z, 0-9, _ или -."
+  read -rp "Введите имя ещё раз: " APP_USER
 done
 
-# Создать пользователя, если нет
-if ! id "$username" &>/dev/null; then
-  echo -e "\n${LINE}\nСоздаю пользователя $username...\n${LINE}"
-  $RUN useradd -m -s /bin/bash "$username"
-fi
-
-HOME_INSTALL="$($RUN getent passwd "$username" | cut -d: -f6)"
-INSTALL_PATH="$HOME_INSTALL/$INSTALL_DIR_NAME"
-
-# Обновление и установка пакетов
-echo -e "\n${LINE}\nОбновление системы и установка зависимостей...\n${LINE}"
-$RUN apt-get update -qq
-$RUN apt-get install -y -qq \
-  git \
-  python3 \
-  python3-pip \
-  python3-venv \
-  python3-dev \
-  libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
-  libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
-  libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
-  fonts-liberation libappindicator3-1 xvfb \
-  || true
-
-# Определить python3 и pip
-PYTHON3=$(command -v python3)
-if [[ -z "$PYTHON3" ]]; then
-  echo -e "${RED}Python3 не найден. Установите: sudo apt install python3 python3-venv python3-pip${RESET}"
-  exit 1
-fi
-
-# Клонирование или обновление репозитория
-echo -e "\n${LINE}\nКлонирование репозитория бота...\n${LINE}"
-$RUN mkdir -p "$(dirname "$INSTALL_PATH")"
-if [[ -d "$INSTALL_PATH/.git" ]]; then
-  BRANCH=$($RUN -u "$username" git -C "$INSTALL_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-  $RUN -u "$username" git -C "$INSTALL_PATH" fetch --all
-  $RUN -u "$username" git -C "$INSTALL_PATH" reset --hard "origin/$BRANCH"
-  $RUN -u "$username" git -C "$INSTALL_PATH" pull --rebase 2>/dev/null || true
+if id "$APP_USER" >/dev/null 2>&1; then
+  echo "Пользователь $APP_USER уже существует, используем его."
 else
-  $RUN -u "$username" git clone "$REPO_URL" "$INSTALL_PATH" || {
-    echo -e "${RED}Не удалось клонировать $REPO_URL. Проверьте URL и доступ.${RESET}"
-    exit 1
-  }
+  echo "Создаю пользователя $APP_USER..."
+  useradd -m -s /bin/bash "$APP_USER"
 fi
 
-# Владелец файлов
-$RUN chown -R "$username:$username" "$INSTALL_PATH"
+echo "Создаю директорию установки: $INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
+chown "$APP_USER":"$APP_USER" "$INSTALL_DIR"
 
-# Виртуальное окружение и зависимости
-echo -e "\n${LINE}\nУстановка Python-зависимостей и Playwright...\n${LINE}"
-REQUIREMENTS="$INSTALL_PATH/requirements.txt"
-if [[ ! -f "$REQUIREMENTS" ]]; then
-  echo -e "${RED}Файл requirements.txt не найден в $INSTALL_PATH${RESET}"
+echo "Скачиваю архив проекта в $INSTALL_DIR/playerok-pro.rar"
+sudo -u "$APP_USER" bash -lc "cd '$INSTALL_DIR' && wget -O playerok-pro.rar '$ARCHIVE_URL'"
+
+echo "Распаковываю архив..."
+sudo -u "$APP_USER" bash -lc "cd '$INSTALL_DIR' && unrar x -y playerok-pro.rar"
+
+echo
+echo "=== ВАЖНО: команда запуска бота ==="
+echo "Введите КОМАНДУ, которой вы обычно запускаете бота,"
+echo "например: python3 main.py   или   python3 bot.py   или   node index.js"
+read -rp "Команда запуска: " START_CMD
+
+if [[ -z "$START_CMD" ]]; then
+  echo "Команда запуска не может быть пустой."
   exit 1
 fi
 
-$RUN -u "$username" bash -c "
-  set -e
-  cd '$INSTALL_PATH'
-  python3 -m venv venv
-  source venv/bin/activate
-  pip install --upgrade pip -q
-  pip install -r requirements.txt -q
-  playwright install chromium
-  playwright install-deps chromium || true
-"
-
-# Конфиг по умолчанию, если нет
-CONFIG_PATH="$INSTALL_PATH/bot_settings/config.json"
-if [[ ! -f "$CONFIG_PATH" ]]; then
-  echo -e "\n${YELLOW}Файл config.json не найден. Создаю шаблон. После установки отредактируйте: $CONFIG_PATH${RESET}"
-  $RUN -u "$username" mkdir -p "$INSTALL_PATH/bot_settings"
-  $RUN -u "$username" tee "$CONFIG_PATH" >/dev/null << 'CONFIG_EOF'
-{
-  "playerok": {
-    "api": { "token": "", "user_agent": "", "proxy": "", "requests_timeout": 30 },
-    "watermark": { "enabled": true, "value": "©️ Playerok PRO" },
-    "read_chat": { "enabled": true },
-    "first_message": { "enabled": true },
-    "custom_commands": { "enabled": true },
-    "auto_deliveries": { "enabled": true },
-    "auto_restore_items": { "sold": true, "expired": false, "all": true },
-    "auto_bump_items": { "enabled": false, "interval": 3600, "all": false },
-    "auto_withdrawal": { "enabled": false, "interval": 86400, "credentials_type": "", "card_id": "", "sbp_bank_id": "", "sbp_phone_number": "", "usdt_address": "" },
-    "auto_complete_deals": { "enabled": true },
-    "tg_logging": { "enabled": true, "chat_id": "", "events": { "new_user_message": true, "new_system_message": true, "new_deal": true, "new_review": true, "new_problem": true, "deal_status_changed": true } }
-  },
-  "telegram": { "api": { "token": "" }, "bot": { "password": "", "signed_users": [] } },
-  "logs": { "max_file_size": 30 }
-}
-CONFIG_EOF
+if [[ "$START_CMD" == *"'"* ]]; then
+  echo "Команда не должна содержать одинарные кавычки (')."
+  exit 1
 fi
 
-# Systemd unit
-echo -e "\n${LINE}\nСоздание systemd-сервиса...\n${LINE}"
-$RUN tee "/etc/systemd/system/${SERVICE_NAME}.service" >/dev/null << SERVICEEOF
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+echo "Создаю systemd-сервис: $SERVICE_FILE"
+
+cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Playerok PRO Bot
+Description=PlayerOK Pro Bot
 After=network.target
 
 [Service]
 Type=simple
-User=$username
-WorkingDirectory=$INSTALL_PATH
-Environment=PATH=$INSTALL_PATH/venv/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$INSTALL_PATH/venv/bin/python bot.py
+User=$APP_USER
+WorkingDirectory=$INSTALL_DIR
+ExecStart=/bin/bash -lc '$START_CMD'
 Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-SERVICEEOF
+EOF
 
-$RUN systemctl daemon-reload
-$RUN systemctl enable "$SERVICE_NAME"
-$RUN systemctl restart "$SERVICE_NAME"
+echo "Перезапускаю systemd и включаю сервис..."
+systemctl daemon-reload
+systemctl enable "${SERVICE_NAME}.service"
+systemctl restart "${SERVICE_NAME}.service"
 
-echo -e "\n${LINE}"
-echo -e "${GREEN}Установка завершена.${RESET}"
-echo -e ""
-echo -e "  Каталог бота:  ${CYAN}$INSTALL_PATH${RESET}"
-echo -e "  Конфиг:        ${CYAN}$CONFIG_PATH${RESET}"
-echo -e "  Сервис:        ${CYAN}$SERVICE_NAME${RESET}"
-echo -e ""
-echo -e "  Управление:"
-echo -e "    ${YELLOW}sudo systemctl status $SERVICE_NAME${RESET}   — статус"
-echo -e "    ${YELLOW}sudo systemctl restart $SERVICE_NAME${RESET} — перезапуск"
-echo -e "    ${YELLOW}sudo systemctl stop $SERVICE_NAME${RESET}     — остановка"
-echo -e "    ${YELLOW}sudo journalctl -u $SERVICE_NAME -f${RESET}    — логи в реальном времени"
-echo -e ""
-echo -e "  Не забудьте прописать Telegram токен и данные PlayerOk в config.json и перезапустить сервис."
-echo -e "${LINE}\n"
+echo
+echo "=============================================="
+echo "Установка завершена."
+echo "Сервис: ${SERVICE_NAME}.service"
+echo "Директория проекта: $INSTALL_DIR"
+echo
+echo "Проверить статус:  systemctl status ${SERVICE_NAME}.service"
+echo "Логи в реальном времени: journalctl -u ${SERVICE_NAME}.service -f"
+echo "=============================================="
